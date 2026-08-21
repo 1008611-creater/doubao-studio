@@ -24,6 +24,15 @@ export default defineConfig({
       },
     },
   },
+  esbuild: {
+    // .js 文件中可能含 JSX 语法（如 App.js），强制按 JSX 解析
+    loader: 'jsx' as any,
+    include: [/src\/.*\.[jt]sx?$/, /src\/.*\.js$/],
+    exclude: [],
+  },
+  optimizeDeps: {
+    esbuildOptions: { loader: { '.js': 'jsx' } },
+  },
   server: {
     port: 5173,
     strictPort: true,

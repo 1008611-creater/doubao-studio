@@ -184,6 +184,8 @@ export interface Task {
     model: VideoModel;
     duration: VideoDuration;
     aspectRatio: VideoAspectRatio;
+    /** 提交模式：ui=界面配置模式（点视频生成+选模型比例时长）；direct=纯提示词模式（直接发带比例时长的提示词） */
+    directMode?: 'ui' | 'direct';
   };
   /** 参考图片路径列表（图生视频/图生图用） */
   attachments?: string[];

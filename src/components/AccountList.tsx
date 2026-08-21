@@ -208,6 +208,21 @@ export const AccountList: React.FC = () => {
     [togglePinned]
   );
 
+  // 同时清除手动冷却和自动健康冷却，立即允许账号参与调度。
+  const handleClearCooldown = useCallback(async (account: Account) => {
+    const hasManualCooldown = !!account.scheduling?.manualCooldownUntil
+      && new Date(account.scheduling.manualCooldownUntil).getTime() > Date.now();
+    const hasHealthCooldown = !!account.health?.cooldownUntil
+      && new Date(account.health.cooldownUntil).getTime() > Date.now();
+    if (hasManualCooldown) {
+      await updateScheduling(account.id, { manualCooldownUntil: undefined });
+    }
+    if (hasHealthCooldown) {
+      await useAccountStore.getState().recordAccountOutcome(account.id, 'clear');
+    }
+    message.success('已取消账号冷却');
+  }, [updateScheduling]);
+
   // ---- 右键菜单 ----
   const getContextMenuItems = useCallback(
     (account: Account): MenuProps['items'] => [
@@ -227,6 +242,16 @@ export const AccountList: React.FC = () => {
         label: '冷却 30 分钟',
         onClick: () => updateScheduling(account.id, { manualCooldownUntil: new Date(Date.now() + 30 * 60 * 1000).toISOString() }),
       },
+      ...(
+        ((account.scheduling?.manualCooldownUntil && new Date(account.scheduling.manualCooldownUntil).getTime() > Date.now())
+          || (account.health?.cooldownUntil && new Date(account.health.cooldownUntil).getTime() > Date.now()))
+          ? [{
+              key: 'clear-cooldown',
+              label: '立即取消冷却',
+              onClick: () => handleClearCooldown(account),
+            }]
+          : []
+      ),
       {
         key: 'edit',
         label: '编辑',
@@ -252,7 +277,7 @@ export const AccountList: React.FC = () => {
         onClick: () => handleDeleteAccount(account),
       },
     ],
-    [handleDeleteAccount, handleRefreshAccount, handleTogglePinned, updateScheduling]
+    [handleClearCooldown, handleDeleteAccount, handleRefreshAccount, handleTogglePinned, updateScheduling]
   );
 
   return (

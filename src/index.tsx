@@ -10,6 +10,39 @@ import zhCN from 'antd/locale/zh_CN';
 import App from './App';
 import './styles/global.css';
 
+// 浏览器预览没有 Electron preload 时，提供只读演示数据；桌面版会使用真实 API。
+if (!window.electronAPI) {
+  const now = new Date().toISOString();
+  const demoAccount = {
+    id: 'demo-account',
+    name: '演示账号',
+    avatar: '',
+    partition: 'demo-account',
+    status: 'idle',
+    pinned: true,
+    createdAt: now,
+    updatedAt: now,
+  };
+  const demoProject = {
+    id: 'default-project',
+    name: '默认项目',
+    description: '浏览器预览项目',
+    color: '#6c5ce7',
+    archived: false,
+    createdAt: now,
+    updatedAt: now,
+  };
+  const ok = async () => ({ success: true });
+  window.electronAPI = {
+    projects: { list: async () => [demoProject], add: async () => ({ success: true, project: demoProject }), update: async () => ({ success: true, project: demoProject }), delete: ok },
+    accounts: { list: async () => [demoAccount], add: async () => ({ success: true, account: demoAccount }), update: async () => ok(), delete: ok, refresh: async () => ok(), setStatus: ok, setPinned: ok, updateSeedanceQuota: async () => ({ success: true, account: demoAccount }), updateHealth: async () => ({ success: true, account: demoAccount }), updateScheduling: async () => ({ success: true, account: demoAccount }), getPartition: async () => 'persist:doubao_demo-account' },
+    tasks: { list: async () => [], add: async () => ({ success: true, tasks: [] }), assign: ok, updateStatus: ok, updateRuntime: async () => ({ success: true }), acquireLock: async () => ({ success: true }), renewLock: async () => ({ success: true }), releaseLock: ok, importCsv: async () => ({ success: true, tasks: [] }), update: async () => ({ success: true }), delete: ok, retry: async () => ({ success: true }), batchPause: ok, getCompletedOutputs: async () => [], selectImages: async () => ({ canceled: true, filePaths: [] }), selectAudio: async () => ({ canceled: true, filePath: null }), readFileAsBase64: async () => ({ success: false }), downloadOutputs: async () => ({ success: true, jobs: [] }), listDownloads: async () => [], exportDiagnostics: async () => ({ success: true }), validateArtifact: async () => ({ success: true }), saveAdapterReport: ok, selectAdapterRules: async () => ({ canceled: true }), selectSaveDir: async () => ({ canceled: true }) },
+    settings: { get: async () => ({ taskTemplates: [], downloadDir: '' }), save: ok },
+    logs: { list: async () => [], append: ok, clear: ok },
+    system: { getVersion: async () => '2.3.0-preview', checkIntegrity: async () => ({ success: true }), exportBackup: async () => ({ success: true }), restoreBackup: async () => ({ success: true }), exportProject: async () => ({ success: true }), checkUpdate: async () => ({ success: true }), minimize: () => {}, toggleMaximize: () => {}, close: () => {} },
+  } as any;
+}
+
 // ==================== Ant Design 深色主题配置 ====================
 
 const darkTheme = {
