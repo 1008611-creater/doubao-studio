@@ -7,7 +7,7 @@
 import { ipcMain, session } from 'electron';
 import { readJSON, writeJSON } from '../utils/store';
 import { normalizeAccounts } from '../utils/persistenceNormalization';
-import { v4 as uuidv4 } from 'uuid';
+import { randomUUID } from 'node:crypto';
 import { replaceIpcHandlers } from './lifecycle';
 import type {
   Account,
@@ -54,6 +54,11 @@ function normalizeQuota(account: Account): void {
   }
 }
 
+/** 账号失败冷却默认关闭；仅显式设置 DOUBAO_ENABLE_ACCOUNT_COOLDOWN=on 才启用。 */
+function cooldownEnabled(): boolean {
+  return String(process.env.DOUBAO_ENABLE_ACCOUNT_COOLDOWN || '').trim().toLowerCase() === 'on';
+}
+
 function normalizeHealth(account: Account): void {
   account.health = {
     loginState: account.health?.loginState || 'unknown',
@@ -66,7 +71,11 @@ function normalizeHealth(account: Account): void {
     lastErrorCode: account.health?.lastErrorCode,
     cooldownUntil: account.health?.cooldownUntil,
   };
-  if (account.health.cooldownUntil && new Date(account.health.cooldownUntil).getTime() <= Date.now()) {
+  if (!cooldownEnabled()) {
+    // 默认关闭冷却：清除历史自动冷却，调度器不会跳过账号。
+    account.health.cooldownUntil = undefined;
+    account.health.verificationRequired = false;
+  } else if (account.health.cooldownUntil && new Date(account.health.cooldownUntil).getTime() <= Date.now()) {
     account.health.cooldownUntil = undefined;
     account.health.verificationRequired = false;
   }
@@ -79,7 +88,9 @@ function normalizeScheduling(account: Account): void {
     preferredModes: account.scheduling?.preferredModes || [],
     manualCooldownUntil: account.scheduling?.manualCooldownUntil,
   };
-  if (account.scheduling.manualCooldownUntil && new Date(account.scheduling.manualCooldownUntil).getTime() <= Date.now()) {
+  if (!cooldownEnabled()) {
+    account.scheduling.manualCooldownUntil = undefined;
+  } else if (account.scheduling.manualCooldownUntil && new Date(account.scheduling.manualCooldownUntil).getTime() <= Date.now()) {
     account.scheduling.manualCooldownUntil = undefined;
   }
 }
@@ -174,10 +185,10 @@ export function registerAccountIPC(): () => void {
         }
 
         const newAccount: Account = {
-          id: uuidv4(),
+          id: randomUUID(),
           name: trimmedName,
           avatar: '', // 后续从豆包页面抓取
-          partition: `account_${uuidv4().slice(0, 8)}`,
+          partition: `account_${randomUUID().slice(0, 8)}`,
           status: 'idle',
           pinned: false,
           seedanceQuota: {
@@ -364,13 +375,19 @@ export function registerAccountIPC(): () => void {
         health.failureCount++;
         health.lastFailureAt = now.toISOString();
         health.lastErrorCode = params.errorCode;
-        if (health.consecutiveFailures >= 3) {
+        if (health.consecutiveFailures >= 3 && cooldownEnabled()) {
           health.cooldownUntil = new Date(now.getTime() + 30 * 60 * 1000).toISOString();
+        } else if (!cooldownEnabled()) {
+          health.cooldownUntil = undefined;
         }
       } else if (params.action === 'verification') {
         health.verificationRequired = true;
         health.lastErrorCode = 'verification';
-        health.cooldownUntil = new Date(now.getTime() + 10 * 60 * 1000).toISOString();
+        if (cooldownEnabled()) {
+          health.cooldownUntil = new Date(now.getTime() + 10 * 60 * 1000).toISOString();
+        } else {
+          health.cooldownUntil = undefined;
+        }
       } else if (params.action === 'login_expired') {
         health.loginState = 'expired';
         health.lastErrorCode = 'page_changed';

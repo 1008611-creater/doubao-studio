@@ -169,6 +169,12 @@ export const useTaskStore = create<TaskState>((set, get) => ({
 
   addTasks: async (text: string, mode?: GenerationMode, videoConfig?: Task['videoConfig'], attachments?: string[], audioAttachment?: string) => {
     set({ error: null });
+    // 比例兜底：豆包页面视频模式默认折叠 16:9（藏在"更多"里），adapter 校验检测不到会失败
+    // 提交前把 16:9 自动转 9:16（豆包页面默认显示，免展开就能命中 adapter 校验）
+    if (videoConfig && videoConfig.aspectRatio === '16:9' && mode === 'video') {
+      console.warn('[taskStore] aspectRatio 16:9 在豆包页面需展开"更多"才能命中校验，自动改为 9:16 避免指派失败');
+      videoConfig = { ...videoConfig, aspectRatio: '9:16' };
+    }
     const prompts = text
       .split('%%%%%%%%%%')
       .map((p) => p.trim())

@@ -10,6 +10,35 @@ import type { ElectronAPI, Account, Task, GenerationMode } from '@doubao-studio/
 // ==================== 暴露 API ====================
 
 const electronAPI = {
+  browserDownloads: {
+    list: (): Promise<any[]> => ipcRenderer.invoke('browser-downloads:list'),
+    download: (partition: string, url: string, filename?: string, rid?: string): Promise<{ success: boolean; error?: string }> =>
+      ipcRenderer.invoke('browser-downloads:download', { partition, url, filename, rid }),
+    onUpdated: (callback: () => void): (() => void) => {
+      const listener = () => callback();
+      ipcRenderer.on('browser-download-updated', listener);
+      return () => ipcRenderer.removeListener('browser-download-updated', listener);
+    },
+    open: (filePath: string): Promise<{ success: boolean; error?: string }> => ipcRenderer.invoke('browser-downloads:open', filePath),
+    reveal: (filePath: string): Promise<{ success: boolean; error?: string }> => ipcRenderer.invoke('browser-downloads:reveal', filePath),
+    delete: (id: string, removeFile = true): Promise<{ success: boolean; error?: string }> => ipcRenderer.invoke('browser-downloads:delete', id, removeFile),
+  },
+  webContentsDownload: (webContentsId: number, url: string, filename?: string, rid?: string): Promise<{ success: boolean; error?: string }> =>
+    ipcRenderer.invoke('webcontents:downloadURL', { webContentsId, url, filename, rid }),
+  downloadTrace: {
+    append: (payload: { bn: string; pt?: string; hu?: 0 | 1; sc?: number; e?: string; rid?: string; extra?: Record<string, unknown> }): Promise<{ success: boolean }> =>
+      ipcRenderer.invoke('download-trace:append', payload),
+    read: (): Promise<{ success: boolean; lines?: string[]; error?: string }> => ipcRenderer.invoke('download-trace:read'),
+    clear: (): Promise<{ success: boolean; error?: string }> => ipcRenderer.invoke('download-trace:clear'),
+  },
+  extensions: {
+    loadForPartition: (partition: string): Promise<{ success: boolean; error?: string }> =>
+      ipcRenderer.invoke('extensions:loadForPartition', partition),
+    status: (partition: string): Promise<{ success: boolean; loaded: boolean; name?: string; id?: string }> =>
+      ipcRenderer.invoke('extensions:status', partition),
+    openPopup: (partition: string): Promise<{ success: boolean; error?: string }> =>
+      ipcRenderer.invoke('extensions:openPopup', partition),
+  },
   projects: {
     list: (): Promise<any[]> => ipcRenderer.invoke('projects:list'),
     add: (name: string, description?: string, color?: string): Promise<any> => ipcRenderer.invoke('projects:add', { name, description, color }),

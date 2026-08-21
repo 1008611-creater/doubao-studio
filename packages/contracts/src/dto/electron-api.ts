@@ -73,6 +73,27 @@ import type {
  * - src/types/electron.d.ts 通过 `import type { ElectronAPI }` 声明全局 Window
  */
 export interface ElectronAPI {
+  // ---- 浏览器扩展 ----
+  extensions: {
+    loadForPartition: (partition: string) => Promise<{ success: boolean; error?: string }>;
+    status: (partition: string) => Promise<{ success: boolean; loaded: boolean; name?: string; id?: string }>;
+    openPopup: (partition: string) => Promise<{ success: boolean; error?: string }>;
+  };
+  browserDownloads: {
+    list: () => Promise<Array<{ id: string; filename: string; filePath: string; state: string; receivedBytes: number; totalBytes: number; startedAt: string }>>;
+    download: (partition: string, url: string, filename?: string, rid?: string) => Promise<{ success: boolean; error?: string }>;
+    onUpdated: (callback: () => void) => () => void;
+    open: (filePath: string) => Promise<{ success: boolean; error?: string }>;
+    reveal: (filePath: string) => Promise<{ success: boolean; error?: string }>;
+    delete: (id: string, removeFile?: boolean) => Promise<{ success: boolean; error?: string }>;
+  };
+  webContentsDownload: (webContentsId: number, url: string, filename?: string, rid?: string) => Promise<{ success: boolean; error?: string }>;
+  downloadTrace: {
+    append: (payload: { bn: string; pt?: string; hu?: 0 | 1; sc?: number; e?: string; rid?: string; extra?: Record<string, unknown> }) => Promise<{ success: boolean }>;
+    read: () => Promise<{ success: boolean; lines?: string[]; error?: string }>;
+    clear: () => Promise<{ success: boolean; error?: string }>;
+  };
+
   // ---- 项目管理 ----
   projects: {
     list: () => Promise<Project[]>;

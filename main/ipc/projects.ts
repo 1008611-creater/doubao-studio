@@ -1,5 +1,5 @@
 import { ipcMain } from 'electron';
-import { v4 as uuidv4 } from 'uuid';
+import { randomUUID } from 'node:crypto';
 import { readJSON, writeJSON } from '../utils/store';
 import type { Project, ProjectAddParams, ProjectUpdateParams, ProjectIdParams } from '@doubao-studio/contracts';
 import { replaceIpcHandlers } from './lifecycle';
@@ -37,7 +37,7 @@ export function registerProjectIPC(): () => void {
     if (!params.name?.trim()) return { success: false, error: '项目名称不能为空' };
     const projects = loadProjects();
     const now = new Date().toISOString();
-    const project: Project = { id: uuidv4(), name: params.name.trim(), description: params.description?.trim() || '', color: params.color || '#6d5dfc', archived: false, createdAt: now, updatedAt: now };
+    const project: Project = { id: randomUUID(), name: params.name.trim(), description: params.description?.trim() || '', color: params.color || '#6d5dfc', archived: false, createdAt: now, updatedAt: now };
     projects.push(project);
     writeJSON(STORE_FILE, projects);
     return { success: true, project };

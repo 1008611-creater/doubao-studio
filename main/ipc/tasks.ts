@@ -4,11 +4,20 @@
  * 负责：任务队列管理、状态流转、批量操作、生成模式
  */
 
-import { ipcMain, dialog, session } from 'electron';
+import { ipcMain, dialog, session, BrowserWindow } from 'electron';
+
+/** 广播任务更新：通知所有窗口刷新任务列表并触发调度（供外部 IPC 添加/指派使用） */
+function broadcastTasksUpdated(): void {
+  for (const win of BrowserWindow.getAllWindows()) {
+    if (win && !win.isDestroyed()) {
+      win.webContents.send('tasks:updated');
+    }
+  }
+}
 import { readJSON, writeJSON } from '../utils/store';
 import { normalizeTasks, normalizeDownloadJobs } from '../utils/persistenceNormalization';
 import { validateDownloadResponse, classifyDownloadException } from '../utils/downloadValidation';
-import { v4 as uuidv4 } from 'uuid';
+import { randomUUID } from 'node:crypto';
 import { getDefaultProjectId } from './projects';
 import { replaceIpcHandlers } from './lifecycle';
 import { recoverInterruptedDownloads, removeExactDownloadPart } from '../utils/downloadRecovery';
@@ -178,6 +187,10 @@ export function registerTaskIPC(): () => void {
     async (_event, params: TaskAddParams): Promise<{ success: boolean; tasks?: Task[]; error?: string }> => {
       try {
         const result = taskService.create(params);
+        if (result.success) {
+          // 广播任务更新：外部 IPC 添加（画布/自动化）也能让 renderer 刷新并触发调度
+          broadcastTasksUpdated();
+        }
         return result.success ? { success: true, tasks: result.data } : result;
       } catch (err: any) {
         return { success: false, error: err.message };
@@ -189,7 +202,12 @@ export function registerTaskIPC(): () => void {
   ipcMain.handle(
     'tasks:assign',
     async (_event, params: TaskAssignParams): Promise<{ success: boolean; error?: string }> => {
-      return taskService.assign(params);
+      const result = taskService.assign(params);
+      if (result.success) {
+        // 指派后广播：renderer 刷新并 processQueue 触发执行
+        broadcastTasksUpdated();
+      }
+      return result;
     }
   );
 
@@ -437,7 +455,7 @@ export function registerTaskIPC(): () => void {
             }
             const now = new Date().toISOString();
             const job: DownloadJob = {
-              id: uuidv4(),
+              id: randomUUID(),
               taskId: task.taskId,
               accountId: task.accountId,
               mode: task.mode,

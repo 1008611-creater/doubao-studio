@@ -2811,7 +2811,10 @@ export async function configureVideoOptions(
     label: string
   ): Promise<boolean> => {
     const canNativeClick = typeof webview.sendInputEvent === 'function';
-    const requireExactText = label === '视频时长' || label === '视频比例';
+    // 下拉选项要求精确匹配，但触发按钮可能显示组合文本（如“16:9 · 10s”）。
+    // 比例选项常带有辅助标签/分辨率（如“4:3 横屏”），不能要求整段文本完全相等。
+    const requireExactText = label === '视频时长';
+    const requireExactTrigger = false;
     const nativeClick = async (clickPos?: string): Promise<boolean> => {
       if (!canNativeClick || !clickPos) return false;
       const parts = clickPos.split(',').map((n) => Number(n));
@@ -2853,7 +2856,7 @@ export async function configureVideoOptions(
             var matched = false;
             for (var t = 0; t < triggerTexts.length; t++) {
               var trigger = triggerTexts[t];
-              if (${JSON.stringify(requireExactText)}
+              if (${JSON.stringify(requireExactTrigger)}
                 ? text.replace(/\\s+/g, '') === trigger.replace(/\\s+/g, '')
                 : text.indexOf(trigger) >= 0) {
                 matched = true;
@@ -2975,12 +2978,12 @@ export async function configureVideoOptions(
           }
 
           function textMatch(text) {
-            var t = (text || '').trim();
+            var t = (text || '').trim().replace(/：/g, ':');
             if (!t) return false;
             if (requireExactText) {
               var normalized = t.replace(/\\s+/g, '');
               for (var exactIndex = 0; exactIndex < optionTexts.length; exactIndex++) {
-                if (normalized === optionTexts[exactIndex].replace(/\\s+/g, '')) return true;
+                if (normalized === optionTexts[exactIndex].replace(/：/g, ':').replace(/\\s+/g, '')) return true;
               }
               return false;
             }
@@ -3014,6 +3017,16 @@ export async function configureVideoOptions(
             };
           }
 
+          function elementText(el) {
+            if (!el) return '';
+            // aria-label/title 可能只描述控件，真实比例文字在子节点中；合并读取避免丢失 4:3/16:9。
+            var aria = el.getAttribute('aria-label') || '';
+            var title = el.getAttribute('title') || '';
+            var visible = el.innerText || '';
+            var content = el.textContent || '';
+            return [aria, title, visible, content].filter(Boolean).join(' ').trim();
+          }
+
           // ---- 策略A：点击后新出现的元素（最可能是下拉选项） ----
           var newCandidates = [];
           var allElems = document.querySelectorAll('*');
@@ -3022,7 +3035,7 @@ export async function configureVideoOptions(
             if (!isVisible(el)) continue;
             var childCount = el.children ? el.children.length : 0;
             if (childCount > 10) continue; // 跳过容器
-            var text = (el.innerText || '').trim();
+            var text = elementText(el);
             if (!text || text.length > 60 || text.length < 2) continue;
             if (!textMatch(text)) continue;
             var shortText = text.substring(0, 40);
@@ -3042,12 +3055,12 @@ export async function configureVideoOptions(
           }
 
           // ---- 策略B：标准选项选择器 ----
-          var sels1 = '[role="option"], [role="menuitem"], div[class*="option"], div[class*="item"], li[class*="option"], li[class*="item"], [class*="popover"] button, [class*="dropdown"] *';
+          var sels1 = 'button, [role="option"], [role="menuitem"], div[class*="option"], div[class*="item"], li[class*="option"], li[class*="item"], [class*="popover"] button, [class*="dropdown"] *';
           var all1 = document.querySelectorAll(sels1);
           for (var i1 = 0; i1 < all1.length; i1++) {
             var el1 = all1[i1];
             if (!isVisible(el1)) continue;
-            var text1 = (el1.innerText || '').trim();
+            var text1 = elementText(el1);
             if (!text1 || text1.length > 60) continue;
             if (textMatch(text1)) {
               var r1 = tryClick(el1, text1);
@@ -3063,7 +3076,7 @@ export async function configureVideoOptions(
               if (tag === 'SCRIPT' || tag === 'STYLE' || tag === 'NOSCRIPT') return NodeFilter.FILTER_REJECT;
               var childCount = node.children ? node.children.length : 0;
               if (childCount > 5) return NodeFilter.FILTER_SKIP;
-              var txt = (node.innerText || '').trim();
+              var txt = elementText(node);
               if (!txt || txt.length > 60 || txt.length < 2) return NodeFilter.FILTER_SKIP;
               if (!textMatch(txt)) return NodeFilter.FILTER_SKIP;
               if (!isVisible(node)) return NodeFilter.FILTER_SKIP;
@@ -3121,9 +3134,45 @@ export async function configureVideoOptions(
       })()
     `;
 
-    const optionResult = await safeExecuteJS<{ ok: boolean; text?: string; tag?: string; pos?: string; clickPos?: string; error?: string; diag?: string }>(
+    let optionResult = await safeExecuteJS<{ ok: boolean; text?: string; tag?: string; pos?: string; clickPos?: string; error?: string; diag?: string }>(
       webview, optionCode, 6000, `select_${label}`
     );
+    // 豆包面板有时在第一次查询时仍处于动画中，保持面板打开再补查一次。
+    if (!optionResult.ok) {
+      console.warn(`[doubaoBridge] ${label} 首次选项匹配失败:`, optionResult.error || optionResult.diag || '无诊断信息');
+      await sleep(700);
+      optionResult = await safeExecuteJS<{ ok: boolean; text?: string; tag?: string; pos?: string; clickPos?: string; error?: string; diag?: string }>(
+        webview, optionCode, 6000, `select_${label}_retry`
+      );
+    }
+
+    // 比例面板是固定网格，文本节点偶尔会被页面重绘替换；用键盘选项作为最终兜底。
+    if (!optionResult.ok && triggerResult.ok && label === '视频比例' && canNativeClick) {
+      const normalizedRatio = optionTexts[0].replace('：', ':');
+      const ratioIndex: Record<string, number> = {
+        '自动': 0,
+        '3:4': 1,
+        '4:3': 2,
+        '9:16': 3,
+        '16:9': 4,
+        '1:1': 5,
+        '21:9': 6,
+      };
+      const downCount = ratioIndex[normalizedRatio];
+      if (downCount !== undefined) {
+        for (let i = 0; i < downCount; i += 1) {
+          webview.sendInputEvent!({ type: 'keyDown', key: 'ArrowDown' });
+          webview.sendInputEvent!({ type: 'keyUp', key: 'ArrowDown' });
+          await sleep(40);
+        }
+        webview.sendInputEvent!({ type: 'keyDown', key: 'Enter' });
+        webview.sendInputEvent!({ type: 'keyUp', key: 'Enter' });
+        await sleep(500);
+        console.log(`[doubaoBridge] 比例文本匹配失败，已使用键盘兜底选择: ${normalizedRatio}`);
+        await ensureVideoConfigBar();
+        return true;
+      }
+    }
 
     if (optionResult.ok) {
       console.log(`[doubaoBridge] 已选择${label}: "${optionResult.text}", tag: ${optionResult.tag}, pos: ${optionResult.pos}`);
@@ -3244,11 +3293,51 @@ export async function configureVideoOptions(
 
   // 1. 选择模型
   console.log(`[doubaoBridge] 配置视频模型: ${config.model}`);
-  const modelTriggers = ['模型', 'Mini', 'Fast', '2.5', '2.0'];
-  if (!await selectDropdownOption(modelTriggers, modelTexts, '视频模型')) {
-    throw new Error(`视频模型配置失败: ${config.model}`);
+  // 优先按钮组直选（豆包页面模型也是平铺按钮组）
+  const modelDirect = await safeExecuteJS<{ ok: boolean; text?: string }>(
+    webview,
+    `(function() {
+      try {
+        var targets = ${JSON.stringify(modelTexts)};
+        var all = document.querySelectorAll('button, [role="button"], [role="radio"], [role="tab"], div, span, label');
+        var best = null;
+        for (var i = 0; i < all.length; i++) {
+          var el = all[i];
+          if (el.offsetParent === null) continue;
+          var r = el.getBoundingClientRect();
+          if (r.width < 20 || r.height < 20) continue;
+          var t = (el.innerText || '').trim();
+          var norm = t.replace(/\s+/g, '');
+          for (var k = 0; k < targets.length; k++) {
+            var tg = targets[k].replace(/\s+/g, '');
+            if (norm !== tg && norm.indexOf(tg) < 0) continue;
+            if (norm.length > 20) continue;
+            var area = r.width * r.height;
+            if (!best || area < best.area) best = { el: el, area: area, text: t };
+            break;
+          }
+        }
+        if (!best) return { ok: false };
+        best.el.click();
+        return { ok: true, text: best.text };
+      } catch (e) {
+        return { ok: false, error: e.message };
+      }
+    })()`,
+    4000,
+    'configure_video_model_direct',
+  );
+  if (modelDirect.ok) {
+    console.log(`[doubaoBridge] 视频模型按钮组直选: ${modelDirect.text || config.model}`);
+    await sleep(400);
+  } else {
+    // 兜底：下拉逻辑（旧版 UI）
+    const modelTriggers = ['模型', 'Mini', 'Fast', '2.5', '2.0'];
+    if (!await selectDropdownOption(modelTriggers, modelTexts, '视频模型')) {
+      throw new Error(`视频模型配置失败: ${config.model}`);
+    }
+    await sleep(400);
   }
-  await sleep(400);
 
   // 2. 选择时长
   console.log(`[doubaoBridge] 配置视频时长: ${config.duration}（仅使用页面可见控件）`);
@@ -3267,10 +3356,56 @@ export async function configureVideoOptions(
 
   // 3. 选择比例
   console.log(`[doubaoBridge] 配置视频比例: ${config.aspectRatio}`);
-  if (!await selectDropdownOption(['比例'], [config.aspectRatio], '视频比例')) {
-    throw new Error(`视频比例配置失败: ${config.aspectRatio}`);
+  // 优先按钮组直选（新版豆包 UI 比例是平铺按钮组，无下拉）
+  const ratioDirect = await safeExecuteJS<{ ok: boolean; text?: string }>(
+    webview,
+    `(function() {
+      try {
+        var target = ${JSON.stringify(config.aspectRatio)};
+        var targetFull = ${JSON.stringify(config.aspectRatio.replace(':', '：'))};
+        var all = document.querySelectorAll('button, [role="button"], [role="radio"], [role="tab"], div, span, label');
+        var best = null;
+        for (var i = 0; i < all.length; i++) {
+          var el = all[i];
+          if (el.offsetParent === null) continue;
+          var r = el.getBoundingClientRect();
+          if (r.width < 20 || r.height < 20) continue;
+          var t = (el.innerText || '').trim();
+          var norm = t.replace(/\s+/g, '');
+          if (norm !== target && norm !== targetFull) continue;
+          // 优先选较小的元素（按钮本身而非容器）
+          var area = r.width * r.height;
+          if (!best || area < best.area) best = { el: el, area: area, text: t };
+        }
+        if (!best) return { ok: false };
+        best.el.click();
+        return { ok: true, text: best.text };
+      } catch (e) {
+        return { ok: false, error: e.message };
+      }
+    })()`,
+    4000,
+    'configure_video_ratio_direct',
+  );
+  if (ratioDirect.ok) {
+    console.log(`[doubaoBridge] 视频比例按钮组直选: ${ratioDirect.text || config.aspectRatio}`);
+    await sleep(400);
+  } else {
+    // 兜底：下拉逻辑（旧版 UI）
+    const ratioTriggers = [
+      '比例',
+      config.aspectRatio,
+      config.aspectRatio.replace(':', '：'),
+    ];
+    const ratioOptions = [
+      config.aspectRatio,
+      config.aspectRatio.replace(':', '：'),
+    ];
+    if (!await selectDropdownOption(ratioTriggers, ratioOptions, '视频比例')) {
+      throw new Error(`视频比例配置失败: ${config.aspectRatio}`);
+    }
+    await sleep(400);
   }
-  await sleep(400);
 
   // 最后确保在视频模式且配置栏正常
   await ensureVideoConfigBar();
@@ -3826,7 +3961,14 @@ export async function inject15sVideoPatch(webview: WebviewHandle): Promise<boole
 export async function startNewConversation(webview: WebviewHandle): Promise<boolean> {
   try {
     webview.loadURL(`https://www.doubao.com/chat/?doubao_studio_new=${Date.now()}`);
-    const ready = await waitForChatReady(webview, 20000);
+    // loadURL 后渲染进程可能仍在切换，过早执行脚本会触发
+    // "Render frame was disposed/page changed"，这里给导航留出稳定时间并重试。
+    await new Promise((resolve) => setTimeout(resolve, 1200));
+    let ready = await waitForChatReady(webview, 30000);
+    if (!ready) {
+      await new Promise((resolve) => setTimeout(resolve, 1500));
+      ready = await waitForChatReady(webview, 15000);
+    }
     if (!ready) return false;
 
     const code = `
@@ -3852,7 +3994,15 @@ export async function startNewConversation(webview: WebviewHandle): Promise<bool
         return { ok: true, method: 'root-chat' };
       })();
     `;
-    const result = await safeExecuteJS<{ ok: boolean; method: string }>(webview, code, 5000, 'startNewConversation');
+    let result: { ok: boolean; method: string } | undefined;
+    for (let attempt = 0; attempt < 2 && !result; attempt += 1) {
+      try {
+        result = await safeExecuteJS<{ ok: boolean; method: string }>(webview, code, 5000, 'startNewConversation');
+      } catch (error) {
+        if (attempt === 1) throw error;
+        await new Promise((resolve) => setTimeout(resolve, 1000));
+      }
+    }
     await new Promise((resolve) => setTimeout(resolve, 800));
     console.log('[doubaoBridge] 新对话已就绪:', result?.method);
     return result?.ok !== false;
@@ -4971,7 +5121,8 @@ export async function manualResolveVideoArtifact(
   return resolveVideoArtifact(webview, {
     ...ctx,
     isManual: true,
-    requireWithoutWatermark: true,
+    // 账号授权由用户确认；不要再因响应缺少 without_watermark 标记而拦截官方地址。
+    requireWithoutWatermark: false,
     timeoutMs,
   });
 }

@@ -78,6 +78,7 @@ export const DEFAULT_VIDEO_CONFIG = {
   model: 'seedance-2.0' as VideoModel,
   duration: '10s' as VideoDuration,
   aspectRatio: '16:9' as VideoAspectRatio,
+  directMode: 'ui' as 'ui' | 'direct',
 };
 
 /** 视频模型显示名映射 */
